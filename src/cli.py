@@ -1,4 +1,4 @@
-"""Точка входа: python -m src.cli {run|verify|schedule|check|resume}."""
+"""Точка входа: python -m src.cli {run|verify|schedule|check|resume|view}."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,7 @@ from .config import Config
 from .fetcher import FetchError, extract_vacancies, fetch_vacancies
 from .report import atomic_write_json, build_report, fetch_info, save_status, save_success
 from .resume import draft_resume, find_vacancy, load_vacancies
+from .view import serve_report
 
 EXIT_ERROR = 1
 
@@ -172,6 +173,11 @@ def cmd_resume(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
+def cmd_view(args: argparse.Namespace, cfg: Config) -> int:
+    serve_report(cfg, args.report, args.demo, args.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m src.cli", description="Прозрачная вакансия")
     parser.add_argument("--config", help="Путь к config.json")
@@ -223,6 +229,13 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--resume", help="исходное резюме JSON (вымышленное)")
     resume.add_argument("--output")
     resume.set_defaults(func=cmd_resume)
+
+    view = sub.add_parser("view", help="открыть локальный интерфейс просмотра отчёта")
+    source = view.add_mutually_exclusive_group()
+    source.add_argument("--demo", action="store_true", help="показать учебный отчёт")
+    source.add_argument("--report", type=Path, help="путь к готовому JSON-отчёту")
+    view.add_argument("--port", type=positive_int, default=8765)
+    view.set_defaults(func=cmd_view)
     return parser
 
 

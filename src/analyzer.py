@@ -44,6 +44,8 @@ def analyze_one(vacancy: dict[str, Any], provider: AIProvider, cfg: Config) -> t
         "id": vacancy.get("id"),
         "url": vacancy.get("vac_url") or vacancy.get("url") or None,
         "findings": findings,
+        "title": facts["job-name"],
+        "employer": facts["company.name"],
     }
     return entry, ai_error
 

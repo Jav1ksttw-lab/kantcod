@@ -115,12 +115,8 @@ def make_finding(
     return finding
 
 
-def _omission(field: str, topic: str, what: str) -> dict[str, Any]:
-    return make_finding(
-        "omission", topic, field,
-        f"В вакансии нет сведений: {what}.",
-        f"Уточните у работодателя и добавьте в карточку: {what}.",
-    )
+def _omission(field: str, topic: str, issue: str, question: str) -> dict[str, Any]:
+    return make_finding("omission", topic, field, issue, question)
 
 
 def _contradiction(
@@ -169,32 +165,40 @@ def rule_findings(vacancy: dict[str, Any], facts: dict[str, str]) -> list[dict[s
     salary_max = _amount(facts["salary_max"])
 
     if is_empty(facts["job-name"]):
-        findings.append(_omission("job-name", "название должности", "точное название должности"))
+        findings.append(_omission("job-name", "название должности",
+                                  "Название должности не указано.", "Как называется должность?"))
     if is_empty(facts["duty"]) and not re.search(r"обязанности\s*[:–—-]\s*\w", details, re.I):
-        findings.append(_omission("duty", "обязанности", "перечень обязанностей"))
+        findings.append(_omission("duty", "обязанности",
+                                  "В карточке нет списка обязанностей.", "Какие задачи нужно выполнять каждый день?"))
     if all(is_empty(facts[field]) for field in (
         "requirements", "requirement.qualification", "qualification", "requirement.experience", "skills",
     )) and not re.search(r"требования\s*[:–—-]\s*\w", details, re.I):
-        findings.append(_omission("requirements", "требования", "профессиональные требования к соискателю"))
+        findings.append(_omission("requirements", "требования",
+                                  "Профессиональные требования не указаны.", "Какие навыки и опыт нужны для этой работы?"))
     if is_empty(facts["requirement.education"]) and not re.search(_EDU_WORDS, details, re.I):
-        findings.append(_omission("requirement.education", "требования", "требуемый уровень образования"))
+        findings.append(_omission("requirement.education", "требования",
+                                  "Требования к образованию не указаны.", "Какое образование требуется, если это важно для работы?"))
     if is_empty(facts["salary"]) and salary_min is None and salary_max is None and not re.search(
         _SALARY_IN_TEXT, details, re.I
     ):
-        findings.append(_omission("salary", "оплата труда", "размер или диапазон оплаты"))
+        findings.append(_omission("salary", "оплата труда",
+                                  "В карточке нет суммы оплаты.", "Какая сумма или диапазон оплаты предусмотрены?"))
     if is_empty(facts["schedule"]) and is_empty(facts["shift"]) and not re.search(_SCHEDULE_WORDS, details, re.I):
-        findings.append(_omission("schedule", "график работы", "график работы и сменность"))
+        findings.append(_omission("schedule", "график работы",
+                                  "График не указан.", "В какие дни и часы нужно работать? Есть ли смены?"))
     if is_empty(facts["addresses.address[].location"]) and not re.search(
         _ADDRESS_WORDS, details + " " + facts["workPlaceType"], re.I
     ):
-        findings.append(_omission("addresses.address[].location", "место работы", "адрес или дистанционный формат работы"))
+        findings.append(_omission("addresses.address[].location", "место работы",
+                                  "Адрес и формат работы не указаны.", "По какому адресу нужно работать? Возможна ли удалённая работа?"))
     if is_empty(facts["employment"]) and not re.search(_EMPLOYMENT_WORDS, details, re.I):
-        findings.append(_omission("employment", "тип занятости", "тип занятости и доля ставки"))
+        findings.append(_omission("employment", "тип занятости",
+                                  "В карточке не указан тип занятости.", "Это полная или частичная занятость? На какую ставку?"))
 
     if salary_min is not None and salary_max is not None and salary_min > salary_max:
         findings.append(_contradiction(
             "оплата труда", facts, "salary_min", "salary_max", "Нижняя граница оплаты превышает верхнюю.",
-            "Уточните нижнюю и верхнюю границы и обновите диапазон оплаты.",
+            "Какая сумма минимальная и какая максимальная?",
         ))
 
     text_low, text_high = _salary_range(facts["salary"])
@@ -210,17 +214,17 @@ def rule_findings(vacancy: dict[str, Any], facts: dict[str, str]) -> list[dict[s
         boundary = "salary_min" if min_mismatch else "salary_max"
         findings.append(_contradiction(
             "оплата труда", facts, "salary", boundary,
-            "Указанная граница оплаты не совпадает с текстовым диапазоном.",
-            f"Уточните фактический диапазон оплаты и согласуйте текст с полем {boundary}.",
+            "Суммы в полях оплаты расходятся.",
+            "Какой диапазон оплаты должен быть в карточке?",
         ))
 
     conflicts = (
         ("employment", "тип занятости", "полная занятость",
          r"\b(?:частичная|неполная) занятость\b|\bполставки\b|\b0[.,]5 ставки\b",
-         "Уточните, полная ли это занятость, и укажите долю ставки."),
+         "Предлагается полная или частичная занятость? На какую ставку?"),
         ("schedule", "график работы", "полный рабочий день",
          r"\b(?:неполный|сокращ[её]нный) рабочий день\b",
-         "Уточните длительность рабочего дня и согласуйте график в карточке."),
+         "Сколько часов длится рабочий день?"),
     )
     for field, topic, label, pattern, question in conflicts:
         if not re.search(rf"\b{label}\b", facts[field], re.I):
@@ -230,7 +234,7 @@ def rule_findings(vacancy: dict[str, Any], facts: dict[str, str]) -> list[dict[s
             if matched and not re.search(r"\b(?:возможн\w*|или|вариант\w*|по согласованию)\b", facts[detail_field], re.I):
                 findings.append(_contradiction(
                     topic, facts, field, detail_field,
-                    "Структурированное поле и описание расходятся.", question, matched.group(),
+                    "В карточке указаны разные условия.", question, matched.group(),
                 ))
                 break
 
@@ -242,25 +246,25 @@ def ambiguity_candidates(facts: dict[str, str]) -> list[dict[str, Any]]:
     checks = [
         ("название должности", ("job-name",),
          r"^(?:специалист|сотрудник|работник|менеджер|эксперт|помощник)$",
-         "Название не раскрывает специализацию.", "Уточните специализацию и основное направление работы."),
+         "Название не раскрывает специализацию.", "Какое направление работы и специализацию указать в названии?"),
         ("обязанности", ("duty",),
          r"(?<!\w)(?:иные поручения|поручения руководителя|работа с документами|работа с клиентами)",
-         "Формулировка обязанностей слишком общая.", "Уточните основные задачи и ожидаемый результат работы."),
+         "Формулировка обязанностей слишком общая.", "Какие задачи сотрудник выполняет регулярно?"),
         ("требования", ("requirements", "requirement.qualification", "qualification"),
          r"нужен опыт|опыт работы обязателен|соответствующ\w* опыт|знание ПК|уверенный пользователь ПК",
-         "Требования можно истолковать по-разному.", "Уточните нужный опыт, навыки или программы."),
+         "Требования можно истолковать по-разному.", "Какой опыт, навыки или знание программ требуются?"),
         ("оплата труда", ("salary", *_DETAIL_FIELDS),
          r"по договор[её]нности|по результатам|по итогам собеседования|достойная зарплата",
-         "Размер оплаты нельзя определить по формулировке.", "Уточните гарантированную сумму или диапазон оплаты."),
+         "Размер оплаты нельзя определить по формулировке.", "На какую сумму или диапазон оплаты может рассчитывать соискатель?"),
         ("график работы", ("schedule", "shift", *_DETAIL_FIELDS),
          r"гибкий график|сменный график|сменная работа|по согласованию|скользящий график",
-         "Описание графика оставляет выбор дней и часов открытым.", "Уточните рабочие дни, часы и порядок согласования смен."),
+         "Из карточки неясно, в какие дни и часы предстоит работать.", "В какие дни и часы нужно работать? Как согласуются смены?"),
         ("место работы", ("addresses.address[].location",),
          r"^(?:Калининградская область|Калининград(?:,?\s*г\.)?|г\.\s*Калининград|территория работодателя)$",
-         "Место указано без точного адреса.", "Уточните населённый пункт, улицу и номер здания или формат работы."),
+         "Место указано без точного адреса.", "В каком населённом пункте и по какому адресу находится рабочее место?"),
         ("тип занятости", ("employment",),
          r"по договор[её]нности|по согласованию|другое|иная занятость",
-         "Из формулировки неясен тип занятости.", "Уточните тип занятости и долю ставки."),
+         "Из формулировки неясен тип занятости.", "Это полная или частичная занятость? На какую ставку?"),
     ]
     details = " ".join(facts[field] for field in _DETAIL_FIELDS)
     pay_known = any(_amount(facts[field]) is not None for field in ("salary_min", "salary_max"))

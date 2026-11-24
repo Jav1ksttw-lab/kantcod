@@ -34,6 +34,7 @@ def build_report(
             "id": entry["id"],
             "url": entry.get("url") or None,
             "findings": entry.get("findings", []),
+            **{key: entry[key] for key in ("title", "employer") if entry.get(key)},
         }
 
     items = list(unique.values())
