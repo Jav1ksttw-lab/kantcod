@@ -13,6 +13,7 @@ ASSETS = {
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
 }
+WEB_ROOT = Path(__file__).with_name("web")
 DEMO_REPORT = ROOT / "data" / "reports" / "report_example.json"
 
 
@@ -32,9 +33,25 @@ def report_payload(cfg: Config, explicit_path: Path | None = None, *, demo: bool
     return {"report": report, "demo": demo, "stale": stale}
 
 
-def serve_report(cfg: Config, report_path: Path | None, demo: bool, port: int) -> None:
-    assets = Path(__file__).with_name("web")
+def export_html(cfg: Config, output: Path, report_path: Path | None, *, demo: bool) -> None:
+    if output.suffix.lower() != ".html":
+        raise ValueError("Для экспорта отчёта укажите файл с расширением .html.")
+    payload = report_payload(cfg, report_path, demo=demo)
+    encoded = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
+    template = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+    css = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
+    script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+    page = template.replace('<link rel="stylesheet" href="./styles.css">', f'<style>\n{css}</style>')
+    page = page.replace('<script src="./app.js" defer></script>', "")
+    page = page.replace(
+        "</body>",
+        f'<script type="application/json" id="embedded-report">{encoded}</script>\n'
+        f'<script>\n{script}</script>\n</body>',
+    )
+    output.write_text(page, encoding="utf-8")
 
+
+def serve_report(cfg: Config, report_path: Path | None, demo: bool, port: int) -> None:
     class ReportHandler(BaseHTTPRequestHandler):
         def _send(self, body: bytes, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
             self.send_response(status)
@@ -62,7 +79,7 @@ def serve_report(cfg: Config, report_path: Path | None, demo: bool, port: int) -
                 self._send(json.dumps(payload, ensure_ascii=False).encode(), "application/json", status)
             elif path in ASSETS:
                 filename, content_type = ASSETS[path]
-                self._send((assets / filename).read_bytes(), content_type)
+                self._send((WEB_ROOT / filename).read_bytes(), content_type)
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
 

@@ -22,7 +22,7 @@ from .config import Config
 from .fetcher import FetchError, extract_vacancies, fetch_vacancies
 from .report import atomic_write_json, build_report, fetch_info, save_status, save_success
 from .resume import draft_resume, find_vacancy, load_vacancies
-from .view import serve_report
+from .view import export_html, serve_report
 
 EXIT_ERROR = 1
 
@@ -174,7 +174,11 @@ def cmd_resume(args: argparse.Namespace, cfg: Config) -> int:
 
 
 def cmd_view(args: argparse.Namespace, cfg: Config) -> int:
-    serve_report(cfg, args.report, args.demo, args.port)
+    if args.export_html:
+        export_html(cfg, args.export_html, args.report, demo=args.demo)
+        print(f"[OK] Готов HTML-отчёт: {args.export_html}")
+    else:
+        serve_report(cfg, args.report, args.demo, args.port)
     return 0
 
 
@@ -235,6 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--demo", action="store_true", help="показать учебный отчёт")
     source.add_argument("--report", type=Path, help="путь к готовому JSON-отчёту")
     view.add_argument("--port", type=positive_int, default=8765)
+    view.add_argument("--export-html", type=Path, help="сохранить отчёт в HTML, который открывается без сервера")
     view.set_defaults(func=cmd_view)
     return parser
 

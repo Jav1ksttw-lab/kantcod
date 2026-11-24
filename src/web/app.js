@@ -171,6 +171,26 @@ function quote(text, field, index) {
     return block;
 }
 
+async function copyQuestion(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch {
+        const previousFocus = document.activeElement;
+        const field = make("textarea", "sr-only");
+        field.value = text;
+        field.readOnly = true;
+        document.body.append(field);
+        field.focus({ preventScroll: true });
+        field.select();
+        try {
+            if (!document.execCommand("copy")) throw new Error("Копирование недоступно");
+        } finally {
+            field.remove();
+            previousFocus?.focus({ preventScroll: true });
+        }
+    }
+}
+
 function findingItem(finding) {
     const item = make("li", "finding");
     const head = make("div", "finding-top");
@@ -201,7 +221,7 @@ function findingItem(finding) {
     copy.setAttribute("aria-label", `Копировать вопрос · ${finding.topic}`);
     copy.addEventListener("click", async () => {
         try {
-            await navigator.clipboard.writeText(finding.recommendation);
+            await copyQuestion(finding.recommendation);
             copy.textContent = "Скопировано";
             get("feedback").textContent = "Вопрос скопирован.";
         } catch {
@@ -269,9 +289,15 @@ function openReport(report, { demo = false, stale = false, fileName = "" } = {})
 async function openSavedReport() {
     const current = ++revision;
     try {
+        const embedded = get("embedded-report");
+        if (embedded) {
+            const payload = JSON.parse(embedded.textContent);
+            openReport(payload.report, payload);
+            return;
+        }
         const response = await fetch("./api/report");
+        if (!response.ok) throw new Error("Отчёт недоступен");
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error);
         if (current === revision) openReport(payload.report, payload);
     } catch {
         if (current === revision) setNotice("Не удалось открыть сохранённый отчёт. Выберите готовый JSON.", true);
