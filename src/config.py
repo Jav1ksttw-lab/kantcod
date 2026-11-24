@@ -54,7 +54,7 @@ class Config:
     def load(cls, path: str | Path | None = None) -> "Config":
         load_dotenv(ROOT / ".env")
         cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
-        raw: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
+        raw: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
         ai = raw.get("ai", {})
         paths = raw.get("paths", {})
 

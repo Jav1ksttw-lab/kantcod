@@ -55,14 +55,19 @@ def analyze_all(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     if not vacancies:
         return [], []
-    entries = []
+    unique: dict[str, dict[str, Any]] = {}
+    ids = [str(vacancy["id"]) for vacancy in vacancies]
+    for vacancy_id, vacancy in zip(ids, vacancies):
+        unique.setdefault(vacancy_id, vacancy)
+
+    entries = {}
     errors = []
-    workers = min(cfg.ai_workers, len(vacancies))
+    workers = min(cfg.ai_workers, len(unique))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(analyze_one, vacancy, provider, cfg) for vacancy in vacancies]
-        for future in futures:
+        futures = {key: pool.submit(analyze_one, vacancy, provider, cfg) for key, vacancy in unique.items()}
+        for key, future in futures.items():
             entry, error = future.result()
-            entries.append(entry)
+            entries[key] = entry
             if error:
                 errors.append(f"{entry['id']}: {error}")
-    return entries, errors
+    return [entries[key] for key in ids], errors

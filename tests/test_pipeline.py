@@ -1,4 +1,6 @@
 import json
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from dataclasses import replace
 from tempfile import TemporaryDirectory
 import unittest
@@ -140,6 +142,40 @@ class PipelineTest(unittest.TestCase):
             output.write_text("previous", encoding="utf-8")
             self.assertEqual(main(["verify", "--strict-ai", "--output", str(output)]), 1)
             self.assertEqual(output.read_text(encoding="utf-8"), "previous")
+
+    def test_verify_checks_duplicate_id_once_and_accepts_utf8_bom(self):
+        vacancy = self.by_id("train-001")
+        provider = FakeProvider('{"findings":[1]}')
+        with TemporaryDirectory() as temp, patch(
+            "src.cli.create_provider", return_value=provider,
+        ), patch.object(provider, "complete", wraps=provider.complete) as complete, redirect_stdout(StringIO()):
+            source = Path(temp) / "vacancies.json"
+            output = Path(temp) / "report.json"
+            source.write_text(json.dumps([vacancy, vacancy]), encoding="utf-8-sig")
+            self.assertEqual(main(["verify", "--strict-ai", "--input", str(source), "--output", str(output)]), 0)
+            complete.assert_called_once()
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["stats"]["vacancies_in"], 2)
+            self.assertEqual(report["stats"]["duplicates_skipped"], 1)
+            self.assertEqual(len(report["vacancies"]), 1)
+
+    def test_console_report_shows_citations_and_recommendation(self):
+        with redirect_stdout(StringIO()) as output:
+            self.assertEqual(main(["report", "--demo", "--id", "train-003"]), 0)
+        self.assertIn("salary: «до 30 000»", output.getvalue())
+        self.assertIn("salary_min: «40000»", output.getvalue())
+        self.assertIn("Вопрос: Какой диапазон оплаты", output.getvalue())
+
+    def test_console_report_filters_clean_vacancies(self):
+        with redirect_stdout(StringIO()) as output:
+            self.assertEqual(main(["report", "--demo", "--with-findings"]), 0)
+        self.assertIn("train-001", output.getvalue())
+        self.assertNotIn("train-004", output.getvalue())
+
+    def test_console_report_rejects_input_vacancies_file(self):
+        with redirect_stderr(StringIO()) as error:
+            self.assertEqual(main(["report", "--file", str(self.cfg.sample_input)]), 1)
+        self.assertIn("Укажите результат run или verify", error.getvalue())
 
     def test_source_failure_preserves_working_report(self):
         with TemporaryDirectory() as temp:

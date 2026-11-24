@@ -22,7 +22,7 @@ def load_vacancies(path: str | None, cfg: Config) -> list[dict[str, Any]]:
     from .fetcher import extract_vacancies
 
     source = path or str(cfg.last_input_path)
-    with open(source, encoding="utf-8") as handle:
+    with open(source, encoding="utf-8-sig") as handle:
         payload = json.load(handle)
     vacancies = extract_vacancies(payload)
     if not vacancies:

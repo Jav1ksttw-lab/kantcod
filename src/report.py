@@ -1,4 +1,4 @@
-"""Формирование, дедупликация и атомарная запись отчёта."""
+"""Формирование, атомарная запись и консольный просмотр отчёта."""
 from __future__ import annotations
 
 import json
@@ -104,3 +104,105 @@ def fetch_info(result: FetchResult) -> dict[str, Any]:
         "total_on_portal": result.total,
         "vacancies_loaded": len(result.vacancies),
     }
+
+
+_FINDING_KINDS = {
+    "omission": "Пропуск",
+    "ambiguity": "Неоднозначность",
+    "contradiction": "Противоречие",
+}
+_FINDING_FIELDS = ("kind", "topic", "field", "quote", "issue", "recommendation")
+_TERMINAL_CONTROLS = dict.fromkeys((*range(32), *range(127, 160)), None)
+
+
+def read_report(path: Path) -> dict[str, Any]:
+    report = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(report, dict) or not isinstance(report.get("vacancies"), list):
+        raise ValueError("Ожидался отчёт с массивом vacancies. Укажите результат run или verify.")
+
+    ids = set()
+    for vacancy in report["vacancies"]:
+        if not isinstance(vacancy, dict) or type(vacancy.get("id")) not in (str, int):
+            raise ValueError("Некорректный ID вакансии в отчёте")
+        vacancy_id = str(vacancy["id"])
+        if not vacancy_id.strip() or vacancy_id in ids:
+            raise ValueError(f"Пустой или повторный ID в отчёте: {vacancy_id!r}")
+        ids.add(vacancy_id)
+        if not isinstance(vacancy.get("findings"), list):
+            raise ValueError(f"У вакансии {vacancy_id!r} нет массива findings")
+        for finding in vacancy["findings"]:
+            if not isinstance(finding, dict) or any(
+                not isinstance(finding.get(field), str) for field in _FINDING_FIELDS
+            ):
+                raise ValueError(f"Неполное замечание у вакансии {vacancy_id!r}")
+    return report
+
+
+def _console_text(value: Any) -> str:
+    return str(value).translate(_TERMINAL_CONTROLS)
+
+
+def format_console_report(
+    report: dict[str, Any],
+    vacancy_id: str | None = None,
+    *,
+    with_findings: bool = False,
+    demo: bool = False,
+) -> str:
+    vacancies = report["vacancies"]
+    if vacancy_id is not None:
+        vacancy = next((item for item in vacancies if str(item["id"]) == vacancy_id), None)
+        if vacancy is None:
+            raise ValueError(f"Вакансия {vacancy_id!r} не найдена. Запустите report, чтобы увидеть список ID.")
+        return _format_vacancy(vacancy, demo=demo)
+
+    findings = [finding for vacancy in vacancies for finding in vacancy["findings"]]
+    count = sum(bool(vacancy["findings"]) for vacancy in vacancies)
+    ai_count = sum(finding.get("origin") == "ai" for finding in findings)
+    label = "Учебный отчёт" if demo else "Отчёт по вакансиям"
+    lines = [
+        label,
+        f"Вакансий: {len(vacancies)} · с замечаниями: {count}",
+        f"Замечаний: {len(findings)} · подтверждено ИИ: {ai_count}",
+        "",
+    ]
+    for vacancy in vacancies:
+        total = len(vacancy["findings"])
+        if with_findings and not total:
+            continue
+        title = _console_text(vacancy.get("title") or "Вакансия")
+        lines.append(f"{_console_text(vacancy['id'])}  {title}  (замечаний: {total})")
+    if not vacancies:
+        lines.append("В отчёте нет вакансий.")
+    elif with_findings and not count:
+        lines.append("Вакансий с замечаниями нет.")
+    return "\n".join(lines).rstrip()
+
+
+def _format_vacancy(vacancy: dict[str, Any], *, demo: bool) -> str:
+    title = _console_text(vacancy.get("title") or "Вакансия")
+    lines = [f"{title} · {_console_text(vacancy['id'])}"]
+    if vacancy.get("employer"):
+        lines.append(f"Работодатель: {_console_text(vacancy['employer'])}")
+    if vacancy.get("url") and not demo:
+        lines.append(f"Карточка: {_console_text(vacancy['url'])}")
+    if not vacancy["findings"]:
+        lines.append("Замечаний нет.")
+    for finding in vacancy["findings"]:
+        kind = _FINDING_KINDS.get(finding["kind"], finding["kind"])
+        origin = " · подтверждено ИИ" if finding.get("origin") == "ai" else ""
+        lines.extend((
+            "",
+            f"{_console_text(finding['topic'].capitalize())} · {_console_text(kind)}{origin}",
+            f"  {_console_text(finding['issue'])}",
+        ))
+        values = finding.get("values")
+        fields = finding.get("value_fields")
+        if isinstance(values, list) and len(values) == 2 and isinstance(fields, list) and len(fields) == 2:
+            for field, value in zip(fields, values):
+                lines.append(f"  {_console_text(field)}: «{_console_text(value)}»")
+        else:
+            evidence = f"«{_console_text(finding['quote'])}»" if finding["quote"] else "сведения отсутствуют"
+            lines.append(f"  {_console_text(finding['field'])}: {evidence}")
+        lines.append(f"  Вопрос: {_console_text(finding['recommendation'])}")
+    return "\n".join(lines)

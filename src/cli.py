@@ -1,4 +1,4 @@
-"""Точка входа: python -m src.cli {run|verify|schedule|check|resume|view}."""
+"""Точка входа: python -m src.cli {run|verify|schedule|report|check|resume}."""
 from __future__ import annotations
 
 import argparse
@@ -18,13 +18,15 @@ from filelock import FileLock, Timeout
 from .ai.base import AIUnavailable
 from .ai.factory import create_provider
 from .analyzer import analyze_all
-from .config import Config
+from .config import ROOT, Config
 from .fetcher import FetchError, extract_vacancies, fetch_vacancies
-from .report import atomic_write_json, build_report, fetch_info, save_status, save_success
+from .report import (
+    atomic_write_json, build_report, fetch_info, format_console_report, read_report, save_status, save_success,
+)
 from .resume import draft_resume, find_vacancy, load_vacancies
-from .view import export_html, serve_report
 
 EXIT_ERROR = 1
+DEMO_REPORT = ROOT / "data" / "reports" / "report_example.json"
 
 
 def _summary(report: dict[str, Any]) -> str:
@@ -40,7 +42,7 @@ def _summary(report: dict[str, Any]) -> str:
 
 
 def _load_input(path: Path) -> list[dict[str, Any]]:
-    with path.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8-sig") as handle:
         return extract_vacancies(json.load(handle))
 
 
@@ -57,8 +59,9 @@ def _analyze(
     entries, ai_errors = analyze_all(vacancies, provider, cfg)
     if ai_errors:
         print(f"[WARN] Пример ошибки ИИ: {ai_errors[0]}", file=sys.stderr)
-        if args.strict_ai or (provider.name != "rules" and len(ai_errors) == len(vacancies)):
-            raise AIUnavailable(f"Ошибки ИИ у {len(ai_errors)} из {len(vacancies)} вакансий")
+        unique_count = len({str(vacancy["id"]) for vacancy in vacancies})
+        if args.strict_ai or len(ai_errors) == unique_count:
+            raise AIUnavailable(f"Ошибки ИИ у {len(ai_errors)} из {unique_count} вакансий")
     return build_report(
         entries, mode=mode, provider=provider, source=source, ai_errors=ai_errors, fetch_info=fetch,
     )
@@ -147,14 +150,9 @@ def cmd_check(args: argparse.Namespace, cfg: Config) -> int:
     with TemporaryDirectory() as temporary:
         temp_path = Path(temporary) / "report.json"
         save_success(report, temp_path)
-        data = json.loads(temp_path.read_text(encoding="utf-8"))
-    assert len(data["vacancies"]) == len({str(v.get("id")) for v in vacancies}), "дубликаты ID"
-    assert all(set(("id", "url", "findings")) <= set(item) for item in data["vacancies"]), "схема нарушена"
-    assert all(
-        set(("kind", "topic", "field", "quote", "issue", "recommendation")) <= set(f)
-        for item in data["vacancies"]
-        for f in item["findings"]
-    ), "схема замечания нарушена"
+        data = read_report(temp_path)
+    if len(data["vacancies"]) != len({str(v["id"]) for v in vacancies}):
+        raise ValueError("Самопроверка выявила пропущенные или повторные ID")
     print(f"[OK] Самопроверка пройдена: {_summary(report)}")
     return 0
 
@@ -164,7 +162,7 @@ def cmd_resume(args: argparse.Namespace, cfg: Config) -> int:
     vacancies = load_vacancies(args.input, cfg)
     vacancy = find_vacancy(vacancies, args.vacancy_id)
     resume_path = Path(args.resume) if args.resume else cfg.resume_path
-    resume = json.loads(resume_path.read_text(encoding="utf-8"))
+    resume = json.loads(resume_path.read_text(encoding="utf-8-sig"))
     draft = draft_resume(vacancy, resume, provider, cfg)
     output = Path(args.output) if args.output else cfg.resume_draft_path
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -173,12 +171,11 @@ def cmd_resume(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
-def cmd_view(args: argparse.Namespace, cfg: Config) -> int:
-    if args.export_html:
-        export_html(cfg, args.export_html, args.report, demo=args.demo)
-        print(f"[OK] Готов HTML-отчёт: {args.export_html}")
-    else:
-        serve_report(cfg, args.report, args.demo, args.port)
+def cmd_report(args: argparse.Namespace, cfg: Config) -> int:
+    sample = args.demo or (args.file is None and not cfg.report_path.is_file())
+    path = DEMO_REPORT if sample else args.file or cfg.report_path
+    report = read_report(path)
+    print(format_console_report(report, args.id, with_findings=args.with_findings, demo=sample))
     return 0
 
 
@@ -234,13 +231,14 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--output")
     resume.set_defaults(func=cmd_resume)
 
-    view = sub.add_parser("view", help="открыть локальный интерфейс просмотра отчёта")
-    source = view.add_mutually_exclusive_group()
+    report = sub.add_parser("report", help="показать сохранённый отчёт в терминале")
+    source = report.add_mutually_exclusive_group()
     source.add_argument("--demo", action="store_true", help="показать учебный отчёт")
-    source.add_argument("--report", type=Path, help="путь к готовому JSON-отчёту")
-    view.add_argument("--port", type=positive_int, default=8765)
-    view.add_argument("--export-html", type=Path, help="сохранить отчёт в HTML, который открывается без сервера")
-    view.set_defaults(func=cmd_view)
+    source.add_argument("--file", type=Path, help="путь к готовому JSON-отчёту")
+    scope = report.add_mutually_exclusive_group()
+    scope.add_argument("--id", help="показать замечания к одной вакансии")
+    scope.add_argument("--with-findings", action="store_true", help="показать только вакансии с замечаниями")
+    report.set_defaults(func=cmd_report)
     return parser
 
 
