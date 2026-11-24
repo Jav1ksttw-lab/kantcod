@@ -4,7 +4,7 @@
 
 Проверяются название должности, обязанности, требования, зарплата, график, место работы и тип занятости. Сервис сопоставляет структурированные поля с текстом карточки и обрабатывает вакансии всех работодателей, которых возвращает API региона 39.
 
-- [Скачать полный проект ZIP](https://codeload.github.com/Jav1ksttw-lab/kantcod/zip/refs/tags/v1.0.0)
+- [Скачать полный проект ZIP](https://codeload.github.com/Jav1ksttw-lab/kantcod/zip/refs/tags/v1.0.1)
 - [Интерактивное HTML-демо](OPEN.html)
 - [Демонстрация](docs/demo.mp4)
 - [Разбор проекта понятным языком](docs/project_report.md)
@@ -23,12 +23,12 @@
 
 ```powershell
 py -3 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m unittest discover -s tests -v
-.venv\Scripts\python.exe -m src.cli check
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m src.cli check
 ```
 
-В остальных командах ниже можно использовать `.venv\Scripts\python.exe` вместо `python`.
+В остальных командах ниже можно использовать `.\.venv\Scripts\python.exe` вместо `python`.
 
 **macOS и Linux**
 
