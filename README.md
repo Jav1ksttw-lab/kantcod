@@ -4,8 +4,8 @@
 
 Проверяются название должности, обязанности, требования, зарплата, график, место работы и тип занятости. Сервис сопоставляет структурированные поля с текстом карточки и обрабатывает вакансии всех работодателей, которых возвращает API региона 39.
 
-- [Скачать полный проект ZIP](https://github.com/Jav1ksttw-lab/kantcod/releases/download/v1.0.0/kantcod-project.zip)
-- [Скачать интерактивное HTML-демо](https://github.com/Jav1ksttw-lab/kantcod/releases/download/v1.0.0/kantcod-demo.html)
+- [Скачать полный проект ZIP](https://codeload.github.com/Jav1ksttw-lab/kantcod/zip/refs/tags/v1.0.0)
+- [Интерактивное HTML-демо](OPEN.html)
 - [Демонстрация](docs/demo.mp4)
 - [Разбор проекта понятным языком](docs/project_report.md)
 - [Сценарий записи своим голосом](docs/demo_script.md)

@@ -42,7 +42,7 @@ def export_html(cfg: Config, output: Path, report_path: Path | None, *, demo: bo
     css = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
     script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
     page = template.replace('<link rel="stylesheet" href="./styles.css">', f'<style>\n{css}</style>')
-    page = page.replace('<script src="./app.js" defer></script>', "")
+    page = page.replace('    <script src="./app.js" defer></script>\n', "")
     page = page.replace(
         "</body>",
         f'<script type="application/json" id="embedded-report">{encoded}</script>\n'
