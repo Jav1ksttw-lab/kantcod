@@ -7,6 +7,7 @@ import sys
 from ..config import Config
 from .base import AIProvider, AIUnavailable
 from .gigachat import GigaChatProvider
+from .llamacpp import LlamaCppProvider
 from .ollama import OllamaProvider
 from .rules import RulesOnlyProvider
 
@@ -24,6 +25,9 @@ def create_provider(cfg: Config, override: str | None = None, strict: bool = Fal
             )
         return GigaChatProvider(cfg.gigachat_model, cfg.temperature)
 
+    if provider == "llamacpp":
+        return LlamaCppProvider(cfg.llamacpp_model, cfg.llamacpp_url, cfg.temperature)
+
     if provider == "ollama":
         instance = OllamaProvider(cfg.ollama_model, cfg.ollama_url, cfg.temperature)
         if not instance.available():
@@ -34,10 +38,12 @@ def create_provider(cfg: Config, override: str | None = None, strict: bool = Fal
         return instance
 
     if provider == "rules":
+        if strict:
+            raise AIUnavailable("Выберите провайдера с ИИ для строгого режима")
         return RulesOnlyProvider()
 
     if provider != "auto":
-        raise AIUnavailable(f"Неизвестный AI_PROVIDER={provider!r}. Возможные значения: auto, gigachat, ollama, rules")
+        raise AIUnavailable(f"Неизвестный AI_PROVIDER={provider!r}. Возможные значения: auto, gigachat, ollama, llamacpp, rules")
 
     has_giga = bool(
         os.getenv("GIGACHAT_ACCESS_TOKEN")

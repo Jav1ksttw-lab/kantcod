@@ -1,15 +1,15 @@
 {
-  "source_url": "http://opendata.trudvsem.ru/api/v1/vacancies/region/39",
+  "source_url": "https://opendata.trudvsem.ru/api/v1/vacancies/region/39",
   "schedule": "0 9 * * *",
   "timezone": "Europe/Kaliningrad",
   "max_vacancies": 50,
   "page_size": 25,
-  "max_pages": 2,
+  "max_pages": 20,
   "request_timeout": 20,
   "retries": 3,
   "retry_backoff_seconds": 1.0,
   "ai": {
-    "provider": "auto",
+    "provider": "ollama",
     "workers": 4,
     "temperature": 0.1,
     "max_chars_per_field": 1200,
@@ -23,7 +23,7 @@
     "run_status": "data/reports/last_run.json",
     "last_input": "data/reports/last_input.json",
     "sample_input": "data/sample/training_vacancies.json",
-    "sample_report": "data/reports/report_example.json",
+    "sample_report": "data/reports/report_verify.json",
     "resume": "data/sample/resume.json",
     "resume_draft": "data/reports/resume_draft.md"
   }

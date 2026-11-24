@@ -24,7 +24,7 @@ def build_report(
     unique: dict[str, dict[str, Any]] = {}
     duplicates = 0
     for entry in entries:
-        vacancy_id = str(entry.get("id") or "")
+        vacancy_id = str(entry["id"]) if entry.get("id") is not None else ""
         if not vacancy_id:
             continue
         if vacancy_id in unique:
@@ -54,6 +54,7 @@ def build_report(
             "findings_total": findings_total,
             "by_kind": dict(kinds),
             "ai_errors": len(ai_errors or []),
+            "ai_findings": sum(f.get("origin") == "ai" for item in items for f in item["findings"]),
         },
         "vacancies": items,
     }
@@ -84,18 +85,16 @@ def save_success(report: dict[str, Any], path: Path, last_success: Path | None =
         atomic_write_json(last_success, report)
 
 
-def save_failure(status_path: Path, message: str, *, source: str) -> None:
-    """При ошибке источника последний успешный отчёт НЕ перезаписывается."""
-    atomic_write_json(
-        status_path,
-        {
-            "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "status": "error",
-            "source": source,
-            "error": message,
-            "last_successful_report_kept": True,
-        },
-    )
+def save_status(status_path: Path, *, source: str, error: str | None = None,
+                has_last_success: bool = False) -> None:
+    status = {
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "status": "error" if error else "ok",
+        "source": source,
+    }
+    if error:
+        status.update(error=error, last_successful_report_kept=has_last_success)
+    atomic_write_json(status_path, status)
 
 
 def fetch_info(result: FetchResult) -> dict[str, Any]:

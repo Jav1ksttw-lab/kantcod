@@ -31,6 +31,8 @@ class Config:
     gigachat_model: str
     ollama_model: str
     ollama_url: str
+    llamacpp_model: str
+    llamacpp_url: str
     report_path: Path
     last_success_path: Path
     run_status_path: Path
@@ -39,6 +41,14 @@ class Config:
     sample_report: Path
     resume_path: Path
     resume_draft_path: Path
+
+    def __post_init__(self) -> None:
+        for name in ("max_vacancies", "page_size", "max_pages", "request_timeout", "retries",
+                     "ai_workers", "max_chars_per_field"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} должен быть положительным")
+        if len({self.report_path, self.last_success_path, self.run_status_path, self.last_input_path}) != 4:
+            raise ValueError("Пути рабочего отчёта, его копии, статуса и входных данных должны отличаться")
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Config":
@@ -64,7 +74,7 @@ class Config:
             timezone=raw.get("timezone", "Europe/Kaliningrad"),
             max_vacancies=int_env("VACANCY_MAX", raw.get("max_vacancies", 50)),
             page_size=int(raw.get("page_size", 25)),
-            max_pages=int(raw.get("max_pages", 2)),
+            max_pages=int(raw.get("max_pages", 20)),
             request_timeout=int(raw.get("request_timeout", 20)),
             retries=int(raw.get("retries", 3)),
             retry_backoff_seconds=float(raw.get("retry_backoff_seconds", 1.0)),
@@ -75,12 +85,14 @@ class Config:
             gigachat_model=env("GIGACHAT_MODEL", ai.get("gigachat_model", "GigaChat")),
             ollama_model=env("OLLAMA_MODEL", ai.get("ollama_model", "qwen2.5:3b")),
             ollama_url=env("OLLAMA_URL", ai.get("ollama_url", "http://localhost:11434")),
+            llamacpp_model=env("LLAMACPP_MODEL", ai.get("llamacpp_model", "qwen2.5-3b-instruct")),
+            llamacpp_url=env("LLAMACPP_URL", ai.get("llamacpp_url", "http://127.0.0.1:18080")),
             report_path=path_value("report", "data/reports/report.json"),
             last_success_path=path_value("last_success", "data/reports/report.last_success.json"),
             run_status_path=path_value("run_status", "data/reports/last_run.json"),
             last_input_path=path_value("last_input", "data/reports/last_input.json"),
             sample_input=path_value("sample_input", "data/sample/training_vacancies.json"),
-            sample_report=path_value("sample_report", "data/reports/report_example.json"),
+            sample_report=path_value("sample_report", "data/reports/report_verify.json"),
             resume_path=path_value("resume", "data/sample/resume.json"),
             resume_draft_path=path_value("resume_draft", "data/reports/resume_draft.md"),
         )

@@ -32,19 +32,23 @@ def with_params(url: str, params: dict[str, int]) -> str:
 
 def extract_vacancies(payload: Any) -> list[dict[str, Any]]:
     """Принимает ответ API, список элементов или одиночную вакансию."""
-    if isinstance(payload, dict) and "vacancy" in payload:
-        payload = [payload]
     if isinstance(payload, dict):
-        payload = payload.get("results", {}).get("vacancies", [])
+        if "vacancy" in payload or "id" in payload:
+            payload = [payload]
+        else:
+            results = payload.get("results")
+            payload = results.get("vacancies") if isinstance(results, dict) else None
     if not isinstance(payload, list):
-        return []
-    result: list[dict[str, Any]] = []
-    for item in payload:
-        if isinstance(item, dict):
-            vacancy = item.get("vacancy", item)
-            if isinstance(vacancy, dict) and vacancy.get("id"):
-                result.append(vacancy)
-    return result
+        raise ValueError("Ожидался массив results.vacancies в ответе API")
+
+    vacancies = []
+    for index, item in enumerate(payload):
+        vacancy = item.get("vacancy", item) if isinstance(item, dict) else None
+        vacancy_id = vacancy.get("id") if isinstance(vacancy, dict) else None
+        if type(vacancy_id) not in (str, int) or not str(vacancy_id).strip():
+            raise ValueError(f"Вакансия с индексом {index} не содержит корректного ID")
+        vacancies.append(vacancy)
+    return vacancies
 
 
 def _request_json(url: str, cfg: Config) -> dict[str, Any]:
@@ -59,8 +63,11 @@ def _request_json(url: str, cfg: Config) -> dict[str, Any]:
             if response.status_code != 200:
                 raise FetchError(f"HTTP {response.status_code} от {url}: {response.text[:200]}")
             data = response.json()
-            if not isinstance(data, dict):
-                raise FetchError(f"Ожидался JSON-объект от {url}, получен {type(data).__name__}")
+            if not isinstance(data, dict) or str(data.get("status", 200)) != "200":
+                raise FetchError(f"Некорректный статус ответа API: {url}")
+            if not isinstance(data.get("results"), dict):
+                raise FetchError(f"Нет объекта results в ответе API: {url}")
+            extract_vacancies(data)
             return data
         except (requests.RequestException, ValueError, FetchError) as exc:
             last_error = exc
@@ -72,18 +79,17 @@ def _request_json(url: str, cfg: Config) -> dict[str, Any]:
 def fetch_vacancies(cfg: Config) -> FetchResult:
     collected: list[dict[str, Any]] = []
     seen: set[str] = set()
-    offset = 0
     pages_loaded = 0
     total: int | None = None
 
-    for _page in range(1, cfg.max_pages + 1):
-        limit = min(cfg.page_size, cfg.max_vacancies - len(collected))
-        if limit <= 0:
-            break
+    limit = min(cfg.page_size, cfg.max_vacancies)
+    if cfg.max_pages > 1:
+        limit = min(limit, (cfg.max_vacancies + 1) // 2)
+    for offset in range(cfg.max_pages):
         url = with_params(cfg.source_url, {"limit": limit, "offset": offset})
         payload = _request_json(url, cfg)
         meta = payload.get("meta") or {}
-        if isinstance(meta.get("total"), int):
+        if isinstance(meta, dict) and type(meta.get("total")) is int:
             total = meta["total"]
         batch = extract_vacancies(payload)
         if not batch:
@@ -94,14 +100,10 @@ def fetch_vacancies(cfg: Config) -> FetchResult:
                 seen.add(vacancy_id)
                 collected.append(vacancy)
         pages_loaded += 1
-        offset += limit
         if len(collected) >= cfg.max_vacancies:
             break
-        if total is not None and offset >= total:
+        if total is not None and (offset + 1) * limit >= total:
             break
-
-    if not collected:
-        raise FetchError(f"Источник вернул 0 вакансий: {cfg.source_url}")
 
     return FetchResult(
         vacancies=collected[: cfg.max_vacancies],

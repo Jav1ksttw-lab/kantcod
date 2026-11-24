@@ -5,6 +5,7 @@ import base64
 import os
 import time
 import uuid
+from threading import Lock
 from typing import Any
 
 import requests
@@ -23,12 +24,13 @@ class GigaChatProvider(AIProvider):
         model: str = "GigaChat",
         temperature: float = 0.1,
         timeout: int = 30,
-        verify_ssl: bool = False,
+        verify_ssl: bool | str = True,
     ) -> None:
         self.model = model
         self.temperature = temperature
         self.timeout = timeout
-        self.verify_ssl = verify_ssl
+        self.verify_ssl = os.getenv("GIGACHAT_CA_BUNDLE") or verify_ssl
+        self._token_lock = Lock()
         self.client_id = os.getenv("GIGACHAT_CLIENT_ID", "")
         self.client_secret = os.getenv("GIGACHAT_CLIENT_SECRET", "")
         self.scope = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
@@ -38,6 +40,10 @@ class GigaChatProvider(AIProvider):
         self._expires_at = time.time() + (1800 if self._token else 0)
 
     def _refresh_token(self) -> str:
+        with self._token_lock:
+            return self._refresh_token_locked()
+
+    def _refresh_token_locked(self) -> str:
         if self._token and time.time() < self._expires_at:
             return self._token
         if not self.client_id or not self.client_secret:
@@ -65,10 +71,14 @@ class GigaChatProvider(AIProvider):
             raise AIUnavailable(f"Ошибка авторизации GigaChat: {exc}") from exc
         if response.status_code != 200 or not payload.get("access_token"):
             raise AIUnavailable(
-                f"Авторизация GigaChat не удалась: HTTP {response.status_code} {str(payload)[:300]}"
+                f"Авторизация GigaChat не удалась: HTTP {response.status_code}"
             )
         self._token = payload["access_token"]
-        self._expires_at = time.time() + int(payload.get("expires_in", 1800)) - 60
+        expires_at = payload.get("expires_at")
+        if isinstance(expires_at, (int, float)):
+            self._expires_at = expires_at / 1000 - 60
+        else:
+            self._expires_at = time.time() + int(payload.get("expires_in", 1800)) - 60
         return self._token
 
     def complete(self, system: str, user: str) -> str:
@@ -99,8 +109,8 @@ class GigaChatProvider(AIProvider):
         except (requests.RequestException, ValueError) as exc:
             raise AIUnavailable(f"Ошибка запроса к GigaChat: {exc}") from exc
         if response.status_code != 200:
-            raise AIUnavailable(f"GigaChat вернул HTTP {response.status_code}: {str(payload)[:300]}")
+            raise AIUnavailable(f"GigaChat вернул HTTP {response.status_code}:")
         try:
             return payload["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
-            raise AIUnavailable(f"Неожиданный ответ GigaChat: {str(payload)[:300]}") from exc
+            raise AIUnavailable(f"Неожиданный ответ GigaChat:") from exc

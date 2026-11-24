@@ -8,15 +8,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .ai.base import AIProvider
+from .ai.base import AIProvider, AIUnavailable
 from .config import Config
-from .facts import build_facts
+from .facts import build_facts, text
 
-SYSTEM = """Ты помогаешь соискателю подготовить черновик резюме под конкретную вакансию.
-Используй ТОЛЬКО факты из предоставленного резюме: опыт, навыки, образование, контакты. Имя и факты не выдумывай.
-Из вакансии можно взять только название должности и формулировки требований/обязанностей для раздела «Почему подхожу».
-Не приписывай соискателю опыт, которого нет в исходном резюме. Не указывай зарплатные ожидания, если их нет в резюме.
-Верни markdown с разделами: «Цель», «Опыт», «Навыки», «Образование», «Почему подхожу». Без пояснений от модели."""
+SYSTEM = """Подбери сведения из резюме, относящиеся к вакансии. Используй только данные запроса.
+Верни JSON формата {"highlights":[1,3]} с номерами максимум трёх подходящих пунктов резюме.
+Если подходящих пунктов нет, верни {"highlights":[]}."""
+
 
 
 def load_vacancies(path: str | None, cfg: Config) -> list[dict[str, Any]]:
@@ -40,14 +39,47 @@ def find_vacancy(vacancies: list[dict[str, Any]], vacancy_id: str) -> dict[str, 
 
 def draft_resume(vacancy: dict[str, Any], resume: dict[str, Any], provider: AIProvider, cfg: Config) -> str:
     facts = build_facts(vacancy)
-    user = (
-        "Исходное резюме (единственный источник фактов о соискателе):\n"
-        + json.dumps(resume, ensure_ascii=False, indent=2)
-        + "\n\nВыбранная вакансия:\n"
-        + json.dumps(
-            {k: facts[k] for k in ("job-name", "duty", "requirements", "requirement.qualification", "requirement.education") if facts[k]},
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-    return provider.complete(SYSTEM, user).strip()
+    if not isinstance(resume, dict):
+        raise ValueError("Резюме должно быть JSON-объектом")
+    experience = []
+    education = []
+    highlights = []
+    skills = [text(item) for item in resume.get("skills", [])]
+    for item in resume.get("experience", []):
+        profile = " · ".join(text(item.get(key)) for key in ("role", "organization", "period") if item.get(key))
+        experience.append(profile)
+        duties = [text(duty) for duty in item.get("duties", [])]
+        experience.extend(duties)
+        highlights.extend(duties)
+    highlights.extend(skills)
+    for item in resume.get("education", []):
+        profile = " · ".join(text(item.get(key)) for key in ("specialty", "institution", "year") if item.get(key))
+        education.append(profile)
+    highlights.extend(education)
+    numbered = dict(enumerate(filter(None, highlights), start=1))
+    user = json.dumps({
+        "vacancy": {key: facts[key][:cfg.max_chars_per_field] for key in (
+            "job-name", "duty", "requirements", "requirement.qualification", "requirement.education",
+        ) if facts[key]},
+        "resume_items": numbered,
+    }, ensure_ascii=False)
+    raw = provider.complete(SYSTEM, user).strip()
+    try:
+        indices = json.loads(raw)["highlights"]
+        if not isinstance(indices, list):
+            raise TypeError
+    except (ValueError, KeyError, TypeError) as exc:
+        raise AIUnavailable("Модель не вернула список пунктов резюме") from exc
+    selected = list(dict.fromkeys(index for index in indices if type(index) is int and index in numbered))[:3]
+    sections = {
+        "Опыт": experience,
+        "Навыки": skills,
+        "Образование": education,
+        "Почему подхожу": [numbered[index] for index in selected],
+    }
+    lines = [f"# {text(resume.get('name')) or 'Черновик резюме'}", "", "## Цель", "",
+             facts["job-name"] or text(resume.get("position"))]
+    for section, items in sections.items():
+        lines.extend(["", f"## {section}", ""])
+        lines.extend(f"- {item}" for item in items if item)
+    return "\n".join(lines)

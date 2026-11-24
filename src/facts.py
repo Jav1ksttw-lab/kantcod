@@ -6,6 +6,7 @@ AI не заменяет этот слой, а дополняет его: зде
 from __future__ import annotations
 
 import re
+from html import unescape
 from typing import Any
 
 TOPICS = {
@@ -22,22 +23,22 @@ KINDS = {"omission", "ambiguity", "contradiction"}
 
 _PLACEHOLDERS = {"", "нет", "не указано", "не заполнено", "отсутствует", "-", "—", "n/a", "none", "?"}
 
-_EDU_WORDS = (
-    "образование", "класс", "бакалавр", "магистр", "специалитет", "курс",
-    "профессиональн", "Technical", "не предъявляются", "не предъявляется",
-)
-_SCHEDULE_WORDS = (
-    "график", "смена", "сменн", "смены", "смены", "9.00", "18.00", "5/2", "5х2",
-    "2/2", "2х2", "недель", "выходн", "суббот", "воскрес", "утренн", "вечерн",
-    "полный рабочий день", "неполный рабочий день", "гибк", "по согласованию",
-)
+_DETAIL_FIELDS = ("duty", "requirements", "qualification", "requirement.qualification", "term.text", "conditions")
+_EDU_WORDS = r"образован|бакалавр|магистр|специалитет|диплом"
+_SCHEDULE_WORDS = r"график|сменн|смен[аы]|(?:[0-2]?\d[:.][0-5]\d)|[1-7]\s*[/хx×]\s*[1-7]|рабоч(?:ий|его) (?:день|дня)|пн\s*[–—-]\s*пт"
+_ADDRESS_WORDS = r"\b(?:ул(?:ица)?\.|улица|проспект|пр-т|шоссе|пер\.|переулок)\s+[^,.]+[, ]+\d|\bдом\s+\d|дистанционная работа|удал[её]нная работа"
+_EMPLOYMENT_WORDS = r"\b(?:полная|частичная|неполная|временная|сезонная) занятость\b|\b(?:на )?0[.,]5 ставки\b|\bполставки\b"
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def text(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return re.sub(r"\s+", " ", value).strip()
+        return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", value))).strip()
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, list):
@@ -53,12 +54,16 @@ def is_empty(value: str) -> bool:
 
 def build_facts(vacancy: dict[str, Any]) -> dict[str, str]:
     """Карта «имя поля API -> нормализованное значение»."""
-    requirement = vacancy.get("requirement") or {}
-    addresses = vacancy.get("addresses") or {}
+    requirement = _mapping(vacancy.get("requirement"))
+    addresses = _mapping(vacancy.get("addresses"))
     address_list = addresses.get("address") or []
+    if isinstance(address_list, dict):
+        address_list = [address_list]
+    if not isinstance(address_list, list):
+        address_list = []
     locations = [text(a.get("location")) for a in address_list if isinstance(a, dict)]
-    term = vacancy.get("term") or {}
-    company = vacancy.get("company") or {}
+    term = vacancy.get("term")
+    company = _mapping(vacancy.get("company"))
     shift = vacancy.get("shift") or []
     return {
         "job-name": text(vacancy.get("job-name")),
@@ -66,13 +71,18 @@ def build_facts(vacancy: dict[str, Any]) -> dict[str, str]:
         "requirements": text(vacancy.get("requirements")),
         "requirement.qualification": text(requirement.get("qualification")),
         "requirement.education": text(requirement.get("education")),
+        "requirement.experience": text(requirement.get("experience")),
+        "skills": text(vacancy.get("skills")),
         "qualification": text(vacancy.get("qualification")),
         "salary": text(vacancy.get("salary")),
         "salary_min": text(vacancy.get("salary_min")),
         "salary_max": text(vacancy.get("salary_max")),
         "schedule": text(vacancy.get("schedule")),
         "shift": text(shift),
-        "term.text": text(term.get("text")),
+        "term.text": text(term.get("text") if isinstance(term, dict) else term),
+        "conditions": text(vacancy.get("conditions")),
+        "workPlaceType": text(vacancy.get("workPlaceType")),
+        "currency": text(vacancy.get("currency")),
         "addresses.address[].location": "; ".join(loc for loc in locations if loc),
         "employment": text(vacancy.get("employment")),
         "work_places": text(vacancy.get("work_places")),
@@ -88,6 +98,7 @@ def make_finding(
     recommendation: str,
     quote: str = "",
     values: list[str] | None = None,
+    value_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     finding: dict[str, Any] = {
         "kind": kind,
@@ -99,181 +110,170 @@ def make_finding(
     }
     if values:
         finding["values"] = [text(v) for v in values if text(v)]
+    if value_fields:
+        finding["value_fields"] = value_fields
     return finding
 
 
-def _omission(facts: dict[str, str], field: str, topic: str, what: str) -> dict[str, Any]:
+def _omission(field: str, topic: str, what: str) -> dict[str, Any]:
     return make_finding(
-        "omission",
-        topic,
-        field,
+        "omission", topic, field,
         f"В вакансии нет сведений: {what}.",
-        f"Уточните у работодателя и добавьте в карточку: {what}. Не выдумывайте значения.",
+        f"Уточните у работодателя и добавьте в карточку: {what}.",
     )
 
 
-def _has_info(facts: dict[str, str], words: tuple[str, ...], *fields: str) -> bool:
-    blob = " ".join(facts.get(f, "") for f in fields).lower()
-    return any(word.lower() in blob for word in words)
+def _contradiction(
+    topic: str, facts: dict[str, str], first: str, second: str, issue: str, recommendation: str,
+    second_quote: str | None = None,
+) -> dict[str, Any]:
+    values = [facts[first], second_quote or facts[second]]
+    return make_finding(
+        "contradiction", topic, first, issue, recommendation,
+        quote=" ↔ ".join(values), values=values, value_fields=[first, second],
+    )
 
 
-_SALARY_NUM = re.compile(r"(?<!\d)(\d[\d ]{2,})(?!\d)")
+_AMOUNT = r"(?:[1-9]\d{0,2}(?:[ .]\d{3})+|[1-9]\d*)"
+_SALARY_LABEL = re.compile(
+    rf"(?:(от|до)\s+)?({_AMOUNT})(?:\s*(?:до|[-–—])\s*({_AMOUNT}))?(?:\s*(?:руб(?:\.|лей)?|₽))?",
+    re.IGNORECASE,
+)
+_SALARY_IN_TEXT = rf"(?:зарплат\w*|оплат\w*|оклад\w*)[^.\d]{{0,35}}{_AMOUNT}|{_AMOUNT}\s*(?:руб\b|рублей\b|₽)"
 
 
-def _parse_salary_range(value: str) -> tuple[int | None, int | None]:
-    clean = value.replace("\u00a0", " ").replace(" ", "")
-    if "от" in clean.lower() and "до" in clean.lower():
-        nums = re.findall(r"\d+", clean)
-        if len(nums) >= 2:
-            return int(nums[0]), int(nums[1])
-    if "от" in clean.lower():
-        nums = re.findall(r"\d+", clean)
-        return (int(nums[0]), None) if nums else (None, None)
-    if "до" in clean.lower():
-        nums = re.findall(r"\d+", clean)
-        return (None, int(nums[0])) if nums else (None, None)
-    nums = [int(n.replace(" ", "")) for n in _SALARY_NUM.findall(value)]
-    if len(nums) >= 2:
-        return nums[0], nums[1]
-    if len(nums) == 1:
-        return nums[0], nums[0]
-    return None, None
+def _amount(value: str) -> int | None:
+    digits = value.replace(" ", "").replace(".", "")
+    return int(digits) if re.fullmatch(r"[1-9]\d{0,12}", digits) else None
+
+
+def _salary_range(value: str) -> tuple[int | None, int | None]:
+    match = _SALARY_LABEL.fullmatch(value)
+    if match is None:
+        return None, None
+    prefix, first, second = match.groups()
+    if second:
+        return _amount(first), _amount(second)
+    if prefix and prefix.lower() == "до":
+        return None, _amount(first)
+    if prefix:
+        return _amount(first), None
+    amount = _amount(first)
+    return amount, amount
 
 
 def rule_findings(vacancy: dict[str, Any], facts: dict[str, str]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    details = " ".join(facts[field] for field in _DETAIL_FIELDS)
+    salary_min = _amount(facts["salary_min"])
+    salary_max = _amount(facts["salary_max"])
 
-    # --- Пропуски ---
     if is_empty(facts["job-name"]):
-        findings.append(_omission(facts, "job-name", "название должности", "точное название должности"))
-    if is_empty(facts["duty"]):
-        findings.append(_omission(facts, "duty", "обязанности", "перечень обязанностей"))
-    if is_empty(facts["requirements"]) and is_empty(facts["requirement.qualification"]):
-        findings.append(
-            _omission(facts, "requirements", "требования", "профессиональные требования к соискателю")
-        )
-    if is_empty(facts["requirement.education"]) and not _has_info(
-        facts, _EDU_WORDS, "requirements", "requirement.qualification", "qualification"
+        findings.append(_omission("job-name", "название должности", "точное название должности"))
+    if is_empty(facts["duty"]) and not re.search(r"обязанности\s*[:–—-]\s*\w", details, re.I):
+        findings.append(_omission("duty", "обязанности", "перечень обязанностей"))
+    if all(is_empty(facts[field]) for field in (
+        "requirements", "requirement.qualification", "qualification", "requirement.experience", "skills",
+    )) and not re.search(r"требования\s*[:–—-]\s*\w", details, re.I):
+        findings.append(_omission("requirements", "требования", "профессиональные требования к соискателю"))
+    if is_empty(facts["requirement.education"]) and not re.search(_EDU_WORDS, details, re.I):
+        findings.append(_omission("requirement.education", "требования", "требуемый уровень образования"))
+    if is_empty(facts["salary"]) and salary_min is None and salary_max is None and not re.search(
+        _SALARY_IN_TEXT, details, re.I
     ):
-        findings.append(_omission(facts, "requirement.education", "требования", "требуемый уровень образования"))
-    if is_empty(facts["salary"]) and is_empty(facts["salary_min"]):
-        findings.append(_omission(facts, "salary", "оплата труда", "размер или диапазон оплаты"))
-    if (
-        is_empty(facts["schedule"])
-        and is_empty(facts["shift"])
-        and not _has_info(facts, _SCHEDULE_WORDS, "requirement.qualification", "term.text")
+        findings.append(_omission("salary", "оплата труда", "размер или диапазон оплаты"))
+    if is_empty(facts["schedule"]) and is_empty(facts["shift"]) and not re.search(_SCHEDULE_WORDS, details, re.I):
+        findings.append(_omission("schedule", "график работы", "график работы и сменность"))
+    if is_empty(facts["addresses.address[].location"]) and not re.search(
+        _ADDRESS_WORDS, details + " " + facts["workPlaceType"], re.I
     ):
-        findings.append(_omission(facts, "schedule", "график работы", "график работы и сменность"))
-    if is_empty(facts["addresses.address[].location"]):
-        findings.append(_omission(facts, "addresses.address[].location", "место работы", "адрес места работы"))
-    if is_empty(facts["employment"]):
-        findings.append(_omission(facts, "employment", "тип занятости", "тип занятости (полная/частичная)"))
+        findings.append(_omission("addresses.address[].location", "место работы", "адрес или дистанционный формат работы"))
+    if is_empty(facts["employment"]) and not re.search(_EMPLOYMENT_WORDS, details, re.I):
+        findings.append(_omission("employment", "тип занятости", "тип занятости и доля ставки"))
 
-    # --- Проверяемые противоречия ---
-    salary_min = int(facts["salary_min"]) if facts["salary_min"].isdigit() else None
-    salary_max = int(facts["salary_max"]) if facts["salary_max"].isdigit() else None
     if salary_min is not None and salary_max is not None and salary_min > salary_max:
-        findings.append(
-            make_finding(
-                "contradiction",
-                "оплата труда",
-                "salary_min",
-                "Нижняя граница оплаты превышает верхнюю.",
-                "Сверьте структурированные поля salary_min и salary_max и укажите корректный диапазон.",
-                quote=f"{salary_min} ↔ {salary_max}",
-                values=[str(salary_min), str(salary_max)],
-            )
-        )
+        findings.append(_contradiction(
+            "оплата труда", facts, "salary_min", "salary_max", "Нижняя граница оплаты превышает верхнюю.",
+            "Уточните нижнюю и верхнюю границы и обновите диапазон оплаты.",
+        ))
 
-    if facts["salary"]:
-        text_low, text_high = _parse_salary_range(facts["salary"])
-        if text_low is not None and salary_min is not None and text_low != salary_min:
-            findings.append(
-                make_finding(
-                    "contradiction",
-                    "оплата труда",
-                    "salary",
-                    "Текстовая формулировка оплаты не совпадает со структурированным минимумом.",
-                    "Уточните у работодателя фактический размер оплаты и приведите текст и поле salary_min к одному значению.",
-                    quote=f"{text_low} ↔ {salary_min}",
-                    values=[str(text_low), str(salary_min)],
-                )
-            )
-        min_above_high = text_high is not None and salary_min is not None and salary_min > text_high
-        if text_high is not None and salary_max is not None and text_high != salary_max and not min_above_high:
-            findings.append(
-                make_finding(
-                    "contradiction",
-                    "оплата труда",
-                    "salary",
-                    "Текстовая верхняя граница оплаты не совпадает с полем salary_max.",
-                    "Уточните верхнюю границу оплаты и обновите поле salary_max или текст вакансии.",
-                    quote=f"{text_high} ↔ {salary_max}",
-                    values=[str(text_high), str(salary_max)],
-                )
-            )
-        if text_high is not None and text_low is None and salary_min is not None and salary_min > text_high:
-            findings.append(
-                make_finding(
-                    "contradiction",
-                    "оплата труда",
-                    "salary",
-                    "Указанный минимум оплаты выше текстовой верхней границы.",
-                    "Сверьте текст вакансии и поле salary_min, укажите непротиворечивый диапазон.",
-                    quote=f"до {text_high} ↔ от {salary_min}",
-                    values=[f"до {text_high}", f"от {salary_min}"],
-                )
-            )
-        if text_low is not None and salary_max is not None and text_low > salary_max:
-            findings.append(
-                make_finding(
-                    "contradiction",
-                    "оплата труда",
-                    "salary",
-                    "Указанный минимум оплаты выше структурированной верхней границы.",
-                    "Сверьте текст вакансии и поле salary_max, укажите непротиворечивый диапазон.",
-                    quote=f"от {text_low} ↔ до {salary_max}",
-                    values=[f"от {text_low}", f"до {salary_max}"],
-                )
-            )
+    text_low, text_high = _salary_range(facts["salary"])
+    min_mismatch = salary_min is not None and (
+        (text_low is not None and text_low != salary_min)
+        or (text_high is not None and salary_min > text_high)
+    )
+    max_mismatch = salary_max is not None and (
+        (text_low is not None and salary_max < text_low)
+        or (text_high is not None and text_high != salary_max)
+    )
+    if min_mismatch or max_mismatch:
+        boundary = "salary_min" if min_mismatch else "salary_max"
+        findings.append(_contradiction(
+            "оплата труда", facts, "salary", boundary,
+            "Указанная граница оплаты не совпадает с текстовым диапазоном.",
+            f"Уточните фактический диапазон оплаты и согласуйте текст с полем {boundary}.",
+        ))
 
-    other = " ".join(
-        facts[f]
-        for f in ("qualification", "requirement.qualification", "requirements", "term.text", "duty")
-        if facts.get(f)
-    ).lower()
-    employment = facts["employment"].lower()
-    for pattern in ("частичная занятость", "неполная занятость", "полставк", "0,5 ставк", "0.5 ставк"):
-        if "полная занятость" in employment and pattern in other:
-            match = re.search(r"[^\s,.;]*" + re.escape(pattern) + r"[^\s,.;]*", other)
-            value = match.group(0) if match else pattern
-            findings.append(
-                make_finding(
-                    "contradiction",
-                    "тип занятости",
-                    "employment",
-                    "Поле занятости и описание дают разные сведения о полноте занятости.",
-                    "Уточните, полная это занятость или частичная, и приведите поле employment и описание к одному значению.",
-                    quote=f"{facts['employment']} ↔ {value}",
-                    values=[facts["employment"], value],
-                )
-            )
-            break
-
-    schedule = facts["schedule"].lower()
-    for pattern in ("неполный рабочий день", "сокращённый рабочий день", "сокращенный рабочий день"):
-        if "полный рабочий день" in schedule and pattern in other:
-            findings.append(
-                make_finding(
-                    "contradiction",
-                    "график работы",
-                    "schedule",
-                    "Структурированный график и описание противоречат друг другу.",
-                    "Уточните реальный график и длительность рабочего дня, затем обновите поле schedule или описание.",
-                    quote=f"{facts['schedule']} ↔ {pattern}",
-                    values=[facts["schedule"], pattern],
-                )
-            )
-            break
+    conflicts = (
+        ("employment", "тип занятости", "полная занятость",
+         r"\b(?:частичная|неполная) занятость\b|\bполставки\b|\b0[.,]5 ставки\b",
+         "Уточните, полная ли это занятость, и укажите долю ставки."),
+        ("schedule", "график работы", "полный рабочий день",
+         r"\b(?:неполный|сокращ[её]нный) рабочий день\b",
+         "Уточните длительность рабочего дня и согласуйте график в карточке."),
+    )
+    for field, topic, label, pattern, question in conflicts:
+        if not re.search(rf"\b{label}\b", facts[field], re.I):
+            continue
+        for detail_field in _DETAIL_FIELDS:
+            matched = re.search(pattern, facts[detail_field], re.I)
+            if matched and not re.search(r"\b(?:возможн\w*|или|вариант\w*|по согласованию)\b", facts[detail_field], re.I):
+                findings.append(_contradiction(
+                    topic, facts, field, detail_field,
+                    "Структурированное поле и описание расходятся.", question, matched.group(),
+                ))
+                break
 
     return findings
+
+
+def ambiguity_candidates(facts: dict[str, str]) -> list[dict[str, Any]]:
+    """Выбирает фрагменты для проверки в контексте остальной карточки."""
+    checks = [
+        ("название должности", ("job-name",),
+         r"^(?:специалист|сотрудник|работник|менеджер|эксперт|помощник)$",
+         "Название не раскрывает специализацию.", "Уточните специализацию и основное направление работы."),
+        ("обязанности", ("duty",),
+         r"(?<!\w)(?:иные поручения|поручения руководителя|работа с документами|работа с клиентами)",
+         "Формулировка обязанностей слишком общая.", "Уточните основные задачи и ожидаемый результат работы."),
+        ("требования", ("requirements", "requirement.qualification", "qualification"),
+         r"нужен опыт|опыт работы обязателен|соответствующ\w* опыт|знание ПК|уверенный пользователь ПК",
+         "Требования можно истолковать по-разному.", "Уточните нужный опыт, навыки или программы."),
+        ("оплата труда", ("salary", *_DETAIL_FIELDS),
+         r"по договор[её]нности|по результатам|по итогам собеседования|достойная зарплата",
+         "Размер оплаты нельзя определить по формулировке.", "Уточните гарантированную сумму или диапазон оплаты."),
+        ("график работы", ("schedule", "shift", *_DETAIL_FIELDS),
+         r"гибкий график|сменный график|сменная работа|по согласованию|скользящий график",
+         "Описание графика оставляет выбор дней и часов открытым.", "Уточните рабочие дни, часы и порядок согласования смен."),
+        ("место работы", ("addresses.address[].location",),
+         r"^(?:Калининградская область|Калининград(?:,?\s*г\.)?|г\.\s*Калининград|территория работодателя)$",
+         "Место указано без точного адреса.", "Уточните населённый пункт, улицу и номер здания или формат работы."),
+        ("тип занятости", ("employment",),
+         r"по договор[её]нности|по согласованию|другое|иная занятость",
+         "Из формулировки неясен тип занятости.", "Уточните тип занятости и долю ставки."),
+    ]
+    details = " ".join(facts[field] for field in _DETAIL_FIELDS)
+    pay_known = any(_amount(facts[field]) is not None for field in ("salary_min", "salary_max"))
+    pay_known |= _salary_range(facts["salary"]) != (None, None) or bool(re.search(_SALARY_IN_TEXT, details, re.I))
+    schedule_text = " ".join((facts["schedule"], facts["shift"], details))
+    schedule_known = re.search(r"[0-2]?\d[:.][0-5]\d\s*(?:до|[-–—])\s*[0-2]?\d[:.][0-5]\d", schedule_text, re.I)
+    candidates = []
+    for topic, fields, pattern, issue, recommendation in checks:
+        if (topic == "оплата труда" and pay_known) or (topic == "график работы" and schedule_known):
+            continue
+        for field in fields:
+            match = re.search(pattern, facts[field], re.I)
+            if match:
+                candidates.append(make_finding("ambiguity", topic, field, issue, recommendation, match.group()))
+                break
+    return candidates

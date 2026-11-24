@@ -11,7 +11,7 @@ from .base import AIProvider, AIUnavailable
 class OllamaProvider(AIProvider):
     name = "ollama"
 
-    def __init__(self, model: str, url: str = "http://localhost:11434", temperature: float = 0.1, timeout: int = 120) -> None:
+    def __init__(self, model: str, url: str = "http://localhost:11434", temperature: float = 0.1, timeout: int = 420) -> None:
         self.model = model
         self.url = url.rstrip("/")
         self.temperature = temperature

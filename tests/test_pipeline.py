@@ -1,10 +1,13 @@
 import json
+from dataclasses import replace
+from tempfile import TemporaryDirectory
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from src.analyzer import analyze_one, parse_model_response
 from src.ai.base import AIProvider
+from src.cli import main
 from src.config import ROOT, Config
 from src.facts import build_facts, rule_findings
 from src.report import build_report
@@ -65,25 +68,19 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(findings, [])
 
     def test_ai_finding_is_validated(self):
-        good = json.dumps({"findings": [{
-            "kind": "ambiguity", "topic": "график работы", "source_field": "schedule",
-            "quote": "Гибкий график", "issue": "Не ясны дни и смены",
-            "recommendation": "Уточните дни недели и время начала и окончания смены",
-        }]}, ensure_ascii=False)
-        entry, error = analyze_one(self.by_id("train-001"), FakeProvider(good), self.cfg)
+        vacancy = self.by_id("train-001")
+        entry, error = analyze_one(vacancy, FakeProvider('{"findings":[1,1]}'), self.cfg)
         self.assertIsNone(error)
-        self.assertTrue(any(f["topic"] == "график работы" and f["quote"] == "Гибкий график" for f in entry["findings"]))
+        self.assertEqual(len(entry["findings"]), 1)
+        self.assertEqual(entry["findings"][0]["quote"], "Гибкий график")
+        self.assertEqual(entry["findings"][0]["origin"], "ai")
 
-        bad = json.dumps({"findings": [{
-            "kind": "ambiguity", "topic": "график работы", "source_field": "schedule",
-            "quote": "Ежедневно с 8 до 17", "issue": "Нет сведений", "recommendation": "Добавьте",
-        }]}, ensure_ascii=False)
-        entry, _ = analyze_one(self.by_id("train-001"), FakeProvider(bad), self.cfg)
+        entry, error = analyze_one(vacancy, FakeProvider('{"findings":[99]}'), self.cfg)
+        self.assertIsNotNone(error)
         self.assertEqual(entry["findings"], [])
 
     def test_parse_markdown_response(self):
-        parsed = parse_model_response('```json\n{"findings": [{"kind": "ambiguity"}]}\n```')
-        self.assertEqual(parsed, [{"kind": "ambiguity"}])
+        self.assertEqual(parse_model_response('```json\n{"findings": [1]}\n```', 1), [1])
 
     def test_report_dedupes_by_id(self):
         entries = [{"id": "a", "url": "u", "findings": []}, {"id": "a", "url": "u", "findings": []}]
@@ -98,18 +95,72 @@ class PipelineTest(unittest.TestCase):
             calls.append(url)
             offset = int(url.split("offset=")[-1].split("&")[0])
             vacancies = [
-                {"vacancy": {"id": f"v{offset + i}", "job-name": "Тест"}} for i in range(2)
+                {"vacancy": {"id": f"v{offset * 2 + i}", "job-name": "Тест"}} for i in range(2)
             ]
             return FakeResponse({"meta": {"total": 100}, "results": {"vacancies": vacancies}})
 
-        from dataclasses import replace
         cfg = replace(self.cfg, page_size=2, max_pages=2, max_vacancies=10)
         with patch("src.fetcher.requests.get", side_effect=fake_get):
             result = fetch_vacancies(cfg)
         self.assertEqual(len(result.vacancies), 4)
         self.assertEqual(result.pages_loaded, 2)
         self.assertTrue(any("offset=0" in url for url in calls))
-        self.assertTrue(any("offset=2" in url for url in calls))
+        self.assertTrue(any("offset=1" in url for url in calls))
+
+    def test_structured_and_descriptive_fields_supply_missing_details(self):
+        vacancy = self.by_id("train-004").copy()
+        vacancy.update({
+            "schedule": "",
+            "employment": "",
+            "salary": "",
+            "salary_min": 0,
+            "salary_max": 70000,
+            "requirements": "",
+            "qualification": "Полная занятость. График 5/2. Высшее образование.",
+            "addresses": {},
+            "conditions": "Место работы: ул. Садовая, 4.",
+        })
+        self.assertEqual(rule_findings(vacancy, build_facts(vacancy)), [])
+
+    def test_contradiction_cites_both_source_fields(self):
+        vacancy = self.by_id("train-003")
+        facts = build_facts(vacancy)
+        for finding in rule_findings(vacancy, facts):
+            if finding["kind"] == "contradiction":
+                for field, value in zip(finding["value_fields"], finding["values"]):
+                    self.assertIn(value, facts[field])
+
+    def test_strict_ai_rejects_partial_invalid_response(self):
+        provider = FakeProvider()
+        answers = ['{"findings": []}', "невалидный JSON"]
+        with TemporaryDirectory() as temp, patch.object(provider, "complete", side_effect=answers), patch(
+            "src.cli.create_provider", return_value=provider,
+        ):
+            output = Path(temp) / "report.json"
+            output.write_text("previous", encoding="utf-8")
+            self.assertEqual(main(["verify", "--strict-ai", "--output", str(output)]), 1)
+            self.assertEqual(output.read_text(encoding="utf-8"), "previous")
+
+    def test_source_failure_preserves_working_report(self):
+        with TemporaryDirectory() as temp:
+            folder = Path(temp)
+            cfg = replace(
+                self.cfg, report_path=folder / "report.json", last_success_path=folder / "previous.json",
+                run_status_path=folder / "status.json", last_input_path=folder / "input.json", retries=1,
+            )
+            for path in (cfg.report_path, cfg.last_success_path):
+                path.write_text("previous", encoding="utf-8")
+            responses = [
+                FakeResponse({"results": {"vacancies": [{"vacancy": {"id": "first"}}]}}),
+                FakeResponse({"status": 500, "results": {"vacancies": []}}),
+            ]
+            with patch("src.cli.Config.load", return_value=cfg), patch("src.fetcher.requests.get", side_effect=responses):
+                self.assertEqual(main(["run", "--ai", "rules"]), 1)
+            self.assertEqual(cfg.report_path.read_text(encoding="utf-8"), "previous")
+            self.assertEqual(cfg.last_success_path.read_text(encoding="utf-8"), "previous")
+            status = json.loads(cfg.run_status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status["status"], "error")
+            self.assertTrue(status["last_successful_report_kept"])
 
 
 if __name__ == "__main__":
