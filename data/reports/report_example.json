@@ -1,0 +1,114 @@
+{
+  "generated_at": "2026-11-24T20:17:14+00:00",
+  "mode": "verify",
+  "source": "data\\sample\\training_vacancies.json",
+  "ai": {
+    "provider": "rules",
+    "model": "none"
+  },
+  "stats": {
+    "vacancies_in": 5,
+    "vacancies_in_report": 5,
+    "duplicates_skipped": 0,
+    "vacancies_with_findings": 2,
+    "findings_total": 7,
+    "by_kind": {
+      "omission": 5,
+      "contradiction": 2
+    },
+    "ai_errors": 0
+  },
+  "vacancies": [
+    {
+      "id": "train-001",
+      "url": "https://trudvsem.ru/vacancy/card/3906000000/train-001",
+      "findings": []
+    },
+    {
+      "id": "train-002",
+      "url": "https://trudvsem.ru/vacancy/card/3906000001/train-002",
+      "findings": [
+        {
+          "kind": "omission",
+          "topic": "обязанности",
+          "field": "duty",
+          "quote": "",
+          "issue": "В вакансии нет сведений: перечень обязанностей.",
+          "recommendation": "Уточните у работодателя и добавьте в карточку: перечень обязанностей. Не выдумывайте значения."
+        },
+        {
+          "kind": "omission",
+          "topic": "требования",
+          "field": "requirements",
+          "quote": "",
+          "issue": "В вакансии нет сведений: профессиональные требования к соискателю.",
+          "recommendation": "Уточните у работодателя и добавьте в карточку: профессиональные требования к соискателю. Не выдумывайте значения."
+        },
+        {
+          "kind": "omission",
+          "topic": "требования",
+          "field": "requirement.education",
+          "quote": "",
+          "issue": "В вакансии нет сведений: требуемый уровень образования.",
+          "recommendation": "Уточните у работодателя и добавьте в карточку: требуемый уровень образования. Не выдумывайте значения."
+        },
+        {
+          "kind": "omission",
+          "topic": "оплата труда",
+          "field": "salary",
+          "quote": "",
+          "issue": "В вакансии нет сведений: размер или диапазон оплаты.",
+          "recommendation": "Уточните у работодателя и добавьте в карточку: размер или диапазон оплаты. Не выдумывайте значения."
+        },
+        {
+          "kind": "omission",
+          "topic": "тип занятости",
+          "field": "employment",
+          "quote": "",
+          "issue": "В вакансии нет сведений: тип занятости (полная/частичная).",
+          "recommendation": "Уточните у работодателя и добавьте в карточку: тип занятости (полная/частичная). Не выдумывайте значения."
+        }
+      ]
+    },
+    {
+      "id": "train-003",
+      "url": "https://trudvsem.ru/vacancy/card/3906000002/train-003",
+      "findings": [
+        {
+          "kind": "contradiction",
+          "topic": "оплата труда",
+          "field": "salary",
+          "quote": "до 30000 ↔ от 40000",
+          "issue": "Указанный минимум оплаты выше текстовой верхней границы.",
+          "recommendation": "Сверьте текст вакансии и поле salary_min, укажите непротиворечивый диапазон.",
+          "values": [
+            "до 30000",
+            "от 40000"
+          ]
+        },
+        {
+          "kind": "contradiction",
+          "topic": "тип занятости",
+          "field": "employment",
+          "quote": "Полная занятость ↔ частичная занятость",
+          "issue": "Поле занятости и описание дают разные сведения о полноте занятости.",
+          "recommendation": "Уточните, полная это занятость или частичная, и приведите поле employment и описание к одному значению.",
+          "values": [
+            "Полная занятость",
+            "частичная занятость"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "train-004",
+      "url": "https://trudvsem.ru/vacancy/card/3906000003/train-004",
+      "findings": []
+    },
+    {
+      "id": "train-005",
+      "url": "https://trudvsem.ru/vacancy/card/3906000004/train-005",
+      "findings": []
+    }
+  ]
+}
