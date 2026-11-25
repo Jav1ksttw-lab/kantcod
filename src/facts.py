@@ -241,8 +241,28 @@ def rule_findings(vacancy: dict[str, Any], facts: dict[str, str]) -> list[dict[s
     return findings
 
 
+_WORK_HOURS = r"\b(?:[01]?\d|2[0-3])[:.][0-5]\d\s*(?:до|[-–—])\s*(?:[01]?\d|2[0-3])[:.][0-5]\d\b"
+_WORK_DAYS = (
+    r"\b(?:[1-7]\s*[/хx×]\s*[1-7]|по будням|будние дни|"
+    r"понедельника по пятницу|пн\.?\s*(?:[-–—]|по)\s*пт)\b"
+)
+
+
 def ambiguity_candidates(facts: dict[str, str]) -> list[dict[str, Any]]:
     """Выбирает фрагменты для проверки в контексте остальной карточки."""
+    details = " ".join(facts[field] for field in _DETAIL_FIELDS)
+    schedule_text = " ".join((facts["schedule"], facts["shift"], details))
+    hours_known = bool(re.search(_WORK_HOURS, schedule_text, re.I))
+    days_known = bool(re.search(_WORK_DAYS, schedule_text, re.I))
+    schedule_issue = "Из карточки неясно, в какие дни и часы предстоит работать."
+    schedule_question = "В какие дни и часы нужно работать? Как согласуются смены?"
+    if hours_known:
+        schedule_issue = "В карточке указаны часы, но не уточнены рабочие дни."
+        schedule_question = "В какие дни нужно работать и как согласуются смены?"
+    elif days_known:
+        schedule_issue = "В карточке указаны рабочие дни, но не уточнены часы."
+        schedule_question = "Во сколько начинается и заканчивается рабочий день или смена?"
+
     checks = [
         ("название должности", ("job-name",),
          r"^(?:специалист|сотрудник|работник|менеджер|эксперт|помощник)$",
@@ -258,7 +278,7 @@ def ambiguity_candidates(facts: dict[str, str]) -> list[dict[str, Any]]:
          "Размер оплаты нельзя определить по формулировке.", "На какую сумму или диапазон оплаты может рассчитывать соискатель?"),
         ("график работы", ("schedule", "shift", *_DETAIL_FIELDS),
          r"гибкий график|сменный график|сменная работа|по согласованию|скользящий график",
-         "Из карточки неясно, в какие дни и часы предстоит работать.", "В какие дни и часы нужно работать? Как согласуются смены?"),
+         schedule_issue, schedule_question),
         ("место работы", ("addresses.address[].location",),
          r"^(?:Калининградская область|Калининград(?:,?\s*г\.)?|г\.\s*Калининград|территория работодателя)$",
          "Место указано без точного адреса.", "В каком населённом пункте и по какому адресу находится рабочее место?"),
@@ -266,14 +286,11 @@ def ambiguity_candidates(facts: dict[str, str]) -> list[dict[str, Any]]:
          r"по договор[её]нности|по согласованию|другое|иная занятость",
          "Из формулировки неясен тип занятости.", "Это полная или частичная занятость? На какую ставку?"),
     ]
-    details = " ".join(facts[field] for field in _DETAIL_FIELDS)
     pay_known = any(_amount(facts[field]) is not None for field in ("salary_min", "salary_max"))
     pay_known |= _salary_range(facts["salary"]) != (None, None) or bool(re.search(_SALARY_IN_TEXT, details, re.I))
-    schedule_text = " ".join((facts["schedule"], facts["shift"], details))
-    schedule_known = re.search(r"[0-2]?\d[:.][0-5]\d\s*(?:до|[-–—])\s*[0-2]?\d[:.][0-5]\d", schedule_text, re.I)
     candidates = []
     for topic, fields, pattern, issue, recommendation in checks:
-        if (topic == "оплата труда" and pay_known) or (topic == "график работы" and schedule_known):
+        if (topic == "оплата труда" and pay_known) or (topic == "график работы" and days_known and hours_known):
             continue
         for field in fields:
             match = re.search(pattern, facts[field], re.I)

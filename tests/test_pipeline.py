@@ -11,7 +11,7 @@ from src.analyzer import analyze_one, parse_model_response
 from src.ai.base import AIProvider
 from src.cli import main
 from src.config import ROOT, Config
-from src.facts import build_facts, rule_findings
+from src.facts import ambiguity_candidates, build_facts, rule_findings
 from src.report import build_report
 from src.fetcher import fetch_vacancies
 
@@ -80,6 +80,28 @@ class PipelineTest(unittest.TestCase):
         entry, error = analyze_one(vacancy, FakeProvider('{"findings":[99]}'), self.cfg)
         self.assertIsNotNone(error)
         self.assertEqual(entry["findings"], [])
+
+    def test_flexible_schedule_with_hours_still_needs_workdays(self):
+        vacancy = {**self.by_id("train-001"), "schedule": "Гибкий график, с 09:00 до 18:00"}
+        findings = ambiguity_candidates(build_facts(vacancy))
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["quote"], "Гибкий график")
+        self.assertIn("В какие дни", findings[0]["recommendation"])
+        self.assertNotIn("часы", findings[0]["recommendation"])
+
+    def test_flexible_schedule_with_workdays_still_needs_hours(self):
+        vacancy = {**self.by_id("train-001"), "schedule": "Гибкий график по будням"}
+        findings = ambiguity_candidates(build_facts(vacancy))
+        self.assertEqual(len(findings), 1)
+        self.assertIn("Во сколько", findings[0]["recommendation"])
+
+    def test_workdays_in_another_field_complete_the_flexible_schedule(self):
+        vacancy = {
+            **self.by_id("train-001"),
+            "schedule": "Гибкий график, с 09:00 до 18:00",
+            "conditions": "Рабочие дни: пн–пт.",
+        }
+        self.assertEqual(ambiguity_candidates(build_facts(vacancy)), [])
 
     def test_parse_markdown_response(self):
         self.assertEqual(parse_model_response('```json\n{"findings": [1]}\n```', 1), [1])
